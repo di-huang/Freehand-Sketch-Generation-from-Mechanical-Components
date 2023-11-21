@@ -1,0 +1,22 @@
+lr: 0.0002
+seed: 0
+prev_weight: 1
+hungarian: True
+rep_type: LBS
+
+radius: 0.0005
+train_encoder: True
+power_i: 1.0
+power_f: 2.0
+
+n_hidden: 512
+n_embedding: 512
+d_project: 128 # unused
+max_queue: 1024
+
+lbd_g: 1
+lbd_p: 1
+lbd_e: 0
+
+evaluate_every: 10
+validate_every: 1

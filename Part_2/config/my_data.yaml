@@ -1,0 +1,17 @@
+dataset: my_data
+# batch: 32
+epochs: 1000
+batch: 32
+rep_type: LBS      # z_e will not be used automatically if embed_loss is 'none'
+embed_loss: none
+
+enable_color: False
+num_strokes: 30
+num_background: 0
+
+lbd_g: 1
+lbd_p: 1
+lbd_e: 0
+
+xpid: my_data
+comment: LBS

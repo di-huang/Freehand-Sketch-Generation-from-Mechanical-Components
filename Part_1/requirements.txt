@@ -1,0 +1,7 @@
+Pillow
+scikit-image
+tqdm
+PyQt5
+opencv-python
+ImageHash
+numpy
