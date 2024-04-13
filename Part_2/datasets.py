@@ -79,7 +79,7 @@ class SketchDataset(Dataset):
         image = Image.open(img_path).convert('RGB')
         res_img = self.transform(image)
 
-        return res_img, res_pos
+        return res_img, res_pos, img_path
 
     def __len__(self):
         if self.test_only:

@@ -6,7 +6,7 @@ import torch
 from hausdorff import hausdorff_distance
 
 from utils.sketch_utils import *
-from utils.shared import args
+from utils.shared import args, logger
 from utils.shared import stroke_config as config
 
 
@@ -67,6 +67,10 @@ def guide_loss_fn(inputs, lbs_output):
     loss_gt = hungarian_loss(stroke, gt)
 
     ### progressive optimization process
+    # print('args.n_layers:', args.n_layers) # depends on argparser
+    # print('len(intermediate):', len(intermediate), '; type(intermediate):', type(intermediate)) # depends on # of transformer decoder layers
+    # print('inputs["pos"].shape:', inputs["pos"].shape) # depends on # of clipasso iterations
+    # assert False
     if args.prev_weight > 0:
         for layer_idx in range(1, args.n_layers):
             pos = inputs["pos"][:, layer_idx]
@@ -119,6 +123,8 @@ def LBS_loss_fn(model, opt, clip_loss_fn, inputs, train_model=True):
     lbs_output['intermediate'] = model.get_intermediate_strokes()
     sketch_black = lbs_output['sketch_black']
 
+# S ------------------------------------------------
+
     ##### L_{local} #####
     loss_gt = guide_loss_fn(inputs, lbs_output)
     loss_gt *= args.lbd_g
@@ -137,8 +143,11 @@ def LBS_loss_fn(model, opt, clip_loss_fn, inputs, train_model=True):
     else:
         loss_percept = torch.zeros(1).to(args.device)
 
+    loss_hf = loss_hf * 8
+    # loss_percept = loss_percept * 15
     # loss_total = loss_gt + loss_percept
     loss_total = loss_gt + loss_percept + loss_hf
+    # loss_total = loss_gt + loss_hf
 
     if train_model:
         update_model(model, opt, loss_total)
@@ -150,8 +159,10 @@ def LBS_loss_fn(model, opt, clip_loss_fn, inputs, train_model=True):
         "loss_total": loss_total,
     }
 
+# E ------------------------------------------------
+
     return {
         "input_images": img,
         "sketch_black": sketch_black
-    }, losses
+    }, losses, lbs_output
 

@@ -1,2 +1,10 @@
 **/__pycache__/
 **/.DS_Store
+**/BKUP/
+**/data/
+**/logs/
+**/diffvg/
+*.zip
+Part_2/data/*
+*.pth
+*.jpg

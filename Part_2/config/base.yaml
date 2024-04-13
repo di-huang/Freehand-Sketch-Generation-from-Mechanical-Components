@@ -5,12 +5,12 @@ hungarian: True
 rep_type: LBS
 
 radius: 0.0005
-train_encoder: True
+train_encoder: False
 power_i: 1.0
 power_f: 2.0
 
-n_hidden: 512
-n_embedding: 512
+n_hidden: 768
+n_embedding: 512 # unused
 d_project: 128 # unused
 max_queue: 1024
 

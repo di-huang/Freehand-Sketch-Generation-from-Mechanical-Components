@@ -121,9 +121,9 @@ class StrokeGenerator(nn.Module):
         p_rad[:, n_foreground:] *= 5            # thick background stroke
 
         return {
-            'position': p_cont,
-            "raw_position": raw_position, 
-            "control_position": control_position, 
+            'position': p_cont, # torch.Size([30, 8])
+            "raw_position": raw_position, # torch.Size([30, 4, 2])
+            "control_position": control_position, # torch.Size([30, 2, 2])
         }
 
     def forward(self, cnn_feature):
@@ -154,6 +154,48 @@ class StrokeGenerator(nn.Module):
 
     def get_intermediate_strokes(self):
         return {k: self.decode_to_params(v) for k, v in self.intermediate_strokes.items()}
+
+
+class Adapter(nn.Module):
+    def __init__(self, c_in, reduction=4):
+        super(Adapter, self).__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(c_in, c_in // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(c_in // reduction, c_in, bias=False),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        x = self.fc(x)
+        return x
+
+# S--------------------------------------------------
+import svgwrite
+
+def tensor_to_svg(tensor, filename='output.svg'):
+    dwg = svgwrite.Drawing(filename, profile='full')
+
+    dwg.attribs['xmlns:ev'] = "http://www.w3.org/2001/xml-events"
+    dwg.attribs['xmlns:xlink'] = "http://www.w3.org/1999/xlink"
+    dwg.attribs['baseProfile'] = "full"
+    dwg.attribs['height'] = "200"
+    dwg.attribs['width'] = "200"
+    dwg.attribs['viewBox'] = "0 0 10 10"
+    dwg.attribs['version'] = "1.1"
+
+    for sketch in tensor:
+        sketch = [sketch[i].cpu().item() + 3 for i in range(len(sketch))]
+
+        path_data = "M {} {} C {} {} {} {} {} {}".format(sketch[0], sketch[1],
+                                                          sketch[2], sketch[3],
+                                                          sketch[4], sketch[5],
+                                                          sketch[6], sketch[7])
+        dwg.add(dwg.path(d=path_data, fill="none", stroke="black", stroke_linecap="round",
+                         stroke_linejoin="round", stroke_opacity=1.0, stroke_width=0.05))
+
+    dwg.save()
+# E--------------------------------------------------
 
 class LBS(nn.Module):
     def __init__(self):
@@ -205,6 +247,9 @@ class LBS(nn.Module):
             ])
 
             patch_num = 7, 7
+
+            dtype = CLIP_encoder.conv1.weight.dtype
+            self.adapter = Adapter(768, 4).to(dtype)
 
         self.stroke_generator = StrokeGenerator(patch_num, n_hidden, n_layers)
 
@@ -262,13 +307,23 @@ class LBS(nn.Module):
                 x = CLIP_encoder.transformer(x)
                 x = x.permute(1, 0, 2)  # LND -> NLD
                 x = CLIP_encoder.ln_post(x[:, 1:, :])
-                        
-                x = x.permute(0, 2, 1)
+
                 return x
             
             with torch.no_grad():
                 x = forward_clip(image)
+                # cnn_feature = x.view(*x.shape[:2], 7, 7)
+
+            x2 = self.adapter(x)
+
+            ratio = 0.2
+            x = ratio * x2 + (1 - ratio) * x
+
+            with torch.no_grad():
+                x = x.permute(0, 2, 1)
+
                 cnn_feature = x.view(*x.shape[:2], 7, 7)
+
 
         strokes = self.stroke_generator(cnn_feature)
 
