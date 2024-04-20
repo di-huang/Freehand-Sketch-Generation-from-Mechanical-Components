@@ -13,41 +13,61 @@ from collections import defaultdict
 import platform
 
 import viewpoint_selector
-from svg_processor import format_svg
+
+import numpy as np
+import matplotlib.pyplot as plt
+from OCC.Core.STEPControl import STEPControl_Reader
+from OCC.Core.HLRBRep import HLRBRep_Algo, HLRBRep_PolyAlgo
+from OCC.Core.HLRAlgo import HLRAlgo_Projector
+from OCC.Core.gp import gp_Ax2, gp_Dir, gp_Pnt
+from OCC.Core.TopExp import TopExp_Explorer
+from OCC.Core.TopAbs import TopAbs_EDGE
+from OCC.Core.TopoDS import TopoDS_Edge
+from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
+from OCC.Core.GCPnts import GCPnts_QuasiUniformDeflection
+from OCC.Extend.DataExchange import read_step_file
+
+from OCC.Extend.TopologyUtils import get_sorted_hlr_edges
+import xml.etree.ElementTree as ET
+
+from OCC.Core.BRepBndLib import brepbndlib_Add
+from OCC.Core.Bnd import Bnd_Box
+from OCC.Core.gp import gp_Pnt, gp_Dir, gp_Vec, gp_XYZ
+from OCC.Core.TopoDS import TopoDS_Shape
+from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
+import cairosvg
 
 if platform.system() == "Windows":
-    from OCC.Display.SimpleGui import init_display
     from OCC.Extend.DataExchange import read_step_file, read_stl_file
     from OCC.Core.Quantity import *
-    import OCC.Core.V3d
 
     PROJ_LIST = [
-        OCC.Core.V3d.V3d_Zpos,
-        OCC.Core.V3d.V3d_Zneg,
-        OCC.Core.V3d.V3d_Xpos,
-        OCC.Core.V3d.V3d_Xneg,
-        OCC.Core.V3d.V3d_Ypos,
-        OCC.Core.V3d.V3d_Yneg,
-        OCC.Core.V3d.V3d_XposYpos,
-        OCC.Core.V3d.V3d_XposZpos,
-        OCC.Core.V3d.V3d_YposZpos,
-        OCC.Core.V3d.V3d_XnegYneg,
-        OCC.Core.V3d.V3d_XnegYpos,
-        OCC.Core.V3d.V3d_XnegZneg,
-        OCC.Core.V3d.V3d_XnegZpos,
-        OCC.Core.V3d.V3d_YnegZneg,
-        OCC.Core.V3d.V3d_YnegZpos,
-        OCC.Core.V3d.V3d_XposYneg,
-        OCC.Core.V3d.V3d_XposZneg,
-        OCC.Core.V3d.V3d_YposZneg,
-        OCC.Core.V3d.V3d_XposYposZpos,
-        OCC.Core.V3d.V3d_XposYnegZpos,
-        OCC.Core.V3d.V3d_XposYposZneg,
-        OCC.Core.V3d.V3d_XnegYposZpos,
-        OCC.Core.V3d.V3d_XposYnegZneg,
-        OCC.Core.V3d.V3d_XnegYposZneg,
-        OCC.Core.V3d.V3d_XnegYnegZpos,
-        OCC.Core.V3d.V3d_XnegYnegZneg,
+        gp_Dir(0, 0, 1),
+        gp_Dir(0, 0, -1),
+        gp_Dir(1, 0, 0),
+        gp_Dir(-1, 0, 0),
+        gp_Dir(0, 1, 0),
+        gp_Dir(0, -1, 0),
+        gp_Dir(1, 1, 0),
+        gp_Dir(1, 0, 1),
+        gp_Dir(0, 1, 1),
+        gp_Dir(-1, -1, 0),
+        gp_Dir(-1, 1, 0),
+        gp_Dir(-1, 0, -1),
+        gp_Dir(-1, 0, 1),
+        gp_Dir(0, -1, -1),
+        gp_Dir(0, -1, 1),
+        gp_Dir(1, -1, 0),
+        gp_Dir(1, 0, -1),
+        gp_Dir(0, 1, -1),
+        gp_Dir(1, 1, 1),
+        gp_Dir(1, -1, 1),
+        gp_Dir(1, 1, -1),
+        gp_Dir(-1, 1, 1),
+        gp_Dir(1, -1, -1),
+        gp_Dir(-1, 1, -1),
+        gp_Dir(-1, -1, 1),
+        gp_Dir(-1, -1, -1)
     ]
 
 if platform.system() == "Linux":
@@ -232,7 +252,7 @@ def count_image_files(folder):
     for root, dirs, files in os.walk(folder):
         for filename in files:
             file_extension = os.path.splitext(filename)[1].lower()
-            if file_extension in (".png", ".jpg", ".jpeg"):
+            if file_extension in (".png", ".jpg", ".jpeg", ".svg"):
                 total_count += 1
             else:
                 raise Exception(f"Error: count_image_files wrong file extension - {os.path.join(root, filename)}.")
@@ -317,38 +337,93 @@ def random_select_files(src_dir, dst_dir, N):
     print(f"\n--- Total number of data being selected: {count}")
 
 
+def convert_transparent_png_to_white_background(png_path, output_path):
+    img = Image.open(png_path)
+    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+        background = Image.new("RGBA", img.size, "WHITE")
+        combined = Image.alpha_composite(background, img)
+        rgb_img = combined.convert("RGB")
+        rgb_img.save(output_path, "PNG")
+    else:
+        img.save(output_path, "PNG")
+
+
+def convert_svg_to_png(svg_path, png_path, args):
+    cairosvg.svg2png(url=svg_path, write_to=png_path, output_width=args.width, output_height=args.height)
+    convert_transparent_png_to_white_background(png_path, png_path)
+
+
+def points2svg(points, out_path, args):
+    tmp = []
+    for stroke in points:
+        for coord in stroke:
+            tmp.append((coord[0], coord[1]))
+    x_values, y_values = zip(*tmp)
+    min_x, max_x = min(x_values) - 5, max(x_values) + 5
+    min_y, max_y = min(y_values) - 5, max(y_values) + 5
+
+    svg_root = ET.Element('svg', xmlns="http://www.w3.org/2000/svg", version="1.1",
+                        width="100%", height="100%", viewBox=f"{min_x} {min_y} {max_x - min_x} {max_y - min_y}")
+
+
+    # svg_root = ET.Element('svg', xmlns="http://www.w3.org/2000/svg", version="1.1",
+    #                     width="100%", height="100%", viewBox=f"{0} {0} {500} {500}")
+
+    for stroke in points:
+        current_path = []
+        for coord in stroke: 
+            x, y = coord
+            current_path.append(f"{x},{y}")
+        polyline = ET.SubElement(svg_root, 'polyline', points=" ".join(current_path), style=f"fill:none;stroke:black;stroke-width:{args.line_width}%")
+
+    tree = ET.ElementTree(svg_root)
+    tree.write(out_path)
+
+
 def my_draw(args, shape_path, out_path):
-    if shape_path.lower().endswith(".stl"):
-        shape = read_stl_file(shape_path)
-    else:
-        shape = read_step_file(shape_path)
-    display, _, _, _ = init_display(size=(args.width, args.height), display_triedron=False, background_gradient_color1=[255,255,255], background_gradient_color2=[255,255,255])
-
-    if args.out_type == "snapshot":
-        ais_shapes = display.DisplayShape(shape)
-    else:
-        ais_shapes = display.DisplayShape(shape, color="black")
-
-    for shp in ais_shapes:
-        shp.SetWidth(args.line_width)
-
-    if args.out_type == "hlr":
-        display.SetModeHLR()
-    elif args.out_type == "wireframe":
-        display.SetModeWireFrame()
-    display.EnableAntiAliasing()
+    step_reader = STEPControl_Reader()
+    step_reader.ReadFile(shape_path)
+    step_reader.TransferRoot()
+    shape = step_reader.Shape()
 
     done_count = 0
+
     for i in range(len(PROJ_LIST)):
         out_path_i = out_path.format(i)
         if args.continue_task and os.path.exists(out_path_i):
             continue
-        view = display.GetView()
-        view.SetProj(PROJ_LIST[i])
-        display.FitAll()
-        view.Dump(out_path_i)
-        done_count += 1
+        
+        dir_ = PROJ_LIST[i]
 
+        edges = get_sorted_hlr_edges(shape, direction=dir_)
+        vis_edges = edges[0]
+
+        points = []
+        for ve in vis_edges:
+            stroke = []
+            adaptor = BRepAdaptor_Curve(ve)
+
+            deflection = GCPnts_QuasiUniformDeflection(adaptor, 0.01)
+            for j in range(1, deflection.NbPoints() + 1):
+                pnt = deflection.Value(j)
+                stroke.append((pnt.X(), pnt.Y()))
+
+            points.append(stroke)
+        
+        min_x = min(x for sublist in points for x, y in sublist)
+        min_y = min(y for sublist in points for x, y in sublist)
+
+        delta_x = 5 - min_x
+        delta_y = 5 - min_y
+
+        points = [[(x + delta_x, y + delta_y) for x, y in sublist] for sublist in points]
+        
+        points2svg(points, out_path_i, args)
+        png_base = os.path.splitext(out_path_i)[0]
+        png_file_path = f"{png_base}.png"
+        convert_svg_to_png(out_path_i, png_file_path, args)
+        os.remove(out_path_i)
+        done_count += 1
     return done_count
 
 
@@ -465,7 +540,7 @@ def main(args):
 
             classes.append(shape_name)
             prefix_name = "==".join(classes)
-            out_path = os.path.join(out_folder, prefix_name + "_{}.png")
+            out_path = os.path.join(out_folder, prefix_name + "_{}.svg")
 
             if args.continue_task and check_shape_already_done(out_folder):
                 print(f"\n=== {done_count}/{final_total} ===== Skip {shape_path} ==============================\n")
@@ -487,7 +562,7 @@ if __name__ == "__main__":
     parser.add_argument("-O", "--output_root_path", type=str, default="out", help="output path.")
     parser.add_argument("-W", "--width", type=int, default=512, help="width.")
     parser.add_argument("-H", "--height", type=int, default=512, help="height.")
-    parser.add_argument("-lw", "--line_width", type=float, default=1.0, help="line width.")
+    parser.add_argument("-lw", "--line_width", type=float, default=0.4, help="line width.")
     parser.add_argument("-st", "--sim_tol", type=float, default=20.0, help="similarity tolerance.")
     parser.add_argument("-rd", "--remove_duplicate", type=int, default=0, help="0: nothing; 1: remove duplicate during generation; 2: only remove duplicate.")
     parser.add_argument("-rdm", "--remove_duplicate_method", type=str, default="hash", help="mse, hash.")
